@@ -1,43 +1,36 @@
-import cv2
-import numpy as np
+import io
+import torch
 from flask import Flask, request, send_file
-from io import BytesIO
+from PIL import Image
  
 app = Flask(__name__)
  
+# Keep memory usage low on free-tier server
+torch.set_num_threads(1)
  
-def cartoonize_image(img):
-    """Converts a normal photo into a cartoon-style image using OpenCV.
-    No AI model needed -> 100% free, runs on any free server."""
+print("Loading AnimeGAN model... (first time takes a bit longer)")
  
-    # Step 1: Resize for consistent processing speed
-    img = cv2.resize(img, (0, 0), fx=1, fy=1)
+# This AI model is trained specifically to turn REAL FACE PHOTOS into
+# a fully redrawn anime/cartoon style (not just outlines/filters).
+# Model + weights are downloaded automatically from GitHub (free, public).
+model = torch.hub.load(
+    "bryandlee/animegan2-pytorch:main",
+    "generator",
+    pretrained="face_paint_512_v2",
+    device="cpu",
+)
+face2paint = torch.hub.load(
+    "bryandlee/animegan2-pytorch:main",
+    "face2paint",
+    size=512,
+)
  
-    # Step 2: Smooth colors (like a painting)
-    color = img
-    for _ in range(2):
-        color = cv2.bilateralFilter(color, d=9, sigmaColor=200, sigmaSpace=200)
- 
-    # Step 3: Detect edges (black outlines like cartoon)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    gray_blur = cv2.medianBlur(gray, 5)
-    edges = cv2.adaptiveThreshold(
-        gray_blur, 255,
-        cv2.ADAPTIVE_THRESH_MEAN_C,
-        cv2.THRESH_BINARY,
-        blockSize=9, C=2
-    )
- 
-    # Step 4: Combine smooth colors + black outlines
-    edges_colored = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
-    cartoon = cv2.bitwise_and(color, edges_colored)
- 
-    return cartoon
+print("Model loaded. Ready to cartoonize.")
  
  
 @app.route("/")
 def home():
-    return "Cartoon API is running! Send a POST request to /cartoonize with an image."
+    return "AnimeGAN Cartoon API is running! POST an image to /cartoonize"
  
  
 @app.route("/cartoonize", methods=["POST"])
@@ -46,20 +39,23 @@ def cartoonize():
         return {"error": "No image uploaded. Send file with key 'image'"}, 400
  
     file = request.files["image"]
-    file_bytes = np.frombuffer(file.read(), np.uint8)
-    img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
  
-    if img is None:
+    try:
+        img = Image.open(file.stream).convert("RGB")
+    except Exception:
         return {"error": "Invalid image file"}, 400
  
-    cartoon = cartoonize_image(img)
+    # Keep input size moderate to save RAM on free server
+    img.thumbnail((512, 512))
  
-    # Encode result back to image bytes
-    _, buffer = cv2.imencode(".jpg", cartoon)
-    result_bytes = BytesIO(buffer)
-    result_bytes.seek(0)
+    with torch.no_grad():
+        result = face2paint(model, img)
  
-    return send_file(result_bytes, mimetype="image/jpeg")
+    buffer = io.BytesIO()
+    result.save(buffer, format="JPEG", quality=90)
+    buffer.seek(0)
+ 
+    return send_file(buffer, mimetype="image/jpeg")
  
  
 if __name__ == "__main__":
