@@ -1,4 +1,6 @@
 import io
+import os
+import urllib.request
 import numpy as np
 from PIL import Image
 import onnxruntime as ort
@@ -7,6 +9,12 @@ from flask import Flask, request, send_file
 app = Flask(__name__)
 
 MODEL_PATH = "face_paint_512_v2_0.onnx"
+MODEL_URL = "https://raw.githubusercontent.com/hpc203/AnimeGAN-onnxruntime/main/face_paint_512_v2_0.onnx"
+
+if not os.path.exists(MODEL_PATH):
+    print("Model file not found locally, downloading it (~8.6MB)...")
+    urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+    print("Model downloaded.")
 
 print("Loading ONNX cartoon model (lightweight, no PyTorch)...")
 session = ort.InferenceSession(MODEL_PATH, providers=["CPUExecutionProvider"])
